@@ -41,12 +41,14 @@ class NHGNN(nn.Module):
     
         # SMILES
         self.smiles_vocab = smile_vocab
+        #编码
         self.smiles_embed = nn.Embedding(smile_vocab + 1, 256, padding_idx=0)
-
         self.is_bidirectional = True
+        #通过线性层（self.smiles_input_fc）进行转换，将嵌入维度转换为LSTM维度。
         self.smiles_input_fc = nn.Linear(256, lstm_dim)
         self.smiles_lstm = nn.LSTM(lstm_dim, lstm_dim, self.bilstm_layers, batch_first=True,
                                   bidirectional=self.is_bidirectional, dropout=dropout_rate)
+        #LayerNorm归一化：用于对层的激活进行特征维度上的归一化。它有助于稳定训练过程并提高模型的泛化能力
         self.ln1 = torch.nn.LayerNorm(lstm_dim * 2)
         self.out_attentions3 = LinkAttention(hidden_dim, n_heads)
 
@@ -59,12 +61,17 @@ class NHGNN(nn.Module):
         self.protein_lstm = nn.LSTM(lstm_dim, lstm_dim, self.bilstm_layers, batch_first=True,
                                   bidirectional=self.is_bidirectional, dropout=dropout_rate)
         self.ln2 = torch.nn.LayerNorm(lstm_dim * 2)
+        #上同smile处理
+        #增添注意力机制
         self.protein_head_fc = nn.Linear(lstm_dim * n_heads, lstm_dim)
         self.protein_out_fc = nn.Linear(2 * lstm_dim, hidden_dim)
         self.out_attentions2 = LinkAttention(hidden_dim, n_heads)
 
         # link
+      
+        #获取最终的注意力权重。
         self.out_attentions = LinkAttention(hidden_dim, n_heads)
+        #将注意力权重应用于连接后的序列。
         self.out_fc1 = nn.Linear(hidden_dim * 3, 256 * 8)
         self.out_fc2 = nn.Linear(256 * 8, hidden_dim * 2)
         self.out_fc3 = nn.Linear(hidden_dim * 2, 1)
@@ -110,7 +117,7 @@ class NHGNN(nn.Module):
         smiles_mask = self.generate_masks(smiles, smiles_lengths, self.n_heads)  # B * head* seq len
         smiles_out, smile_attn = self.out_attentions3(smiles, smiles_mask)  # B * lstm_dim*2
 
-
+        #生成输入序列的掩码（mask），以便在注意力机制中对序列的特定位置进行屏蔽或忽略。这种屏蔽通常用于处理可变长度序列，例如在处理不同长度的SMILES和蛋白质序列时。
         protein_mask = self.generate_masks(protein, protein_lengths, self.n_heads)  # B * head * tar_len
         protein_out, prot_attn = self.out_attentions2(protein, protein_mask)  # B * (lstm_dim *2)
 
@@ -129,13 +136,14 @@ class NHGNN(nn.Module):
         gout = self.hgin(data)
 
         return gout * self.theta + out.view(-1, 1) * (1-self.theta)
-
+    #在注意力机制中屏蔽或忽略输入序列的特定位置，以便模型能够正确处理变长序列的情况。
     def generate_masks(self, adj, adj_sizes, n_heads):
         out = torch.ones(adj.shape[0], adj.shape[1])
         max_size = adj.shape[1]
         if isinstance(adj_sizes, int):
             out[0, adj_sizes:max_size] = 0
         else:
+        #遍历每个序列的索引和长度，将out的对应行从该序列长度到max_size的位置设置为0，以屏蔽不需要考虑的位置。
             for e_id, drug_len in enumerate(adj_sizes):
                 out[e_id, drug_len: max_size] = 0
         out = out.unsqueeze(1).expand(-1, n_heads, -1)
